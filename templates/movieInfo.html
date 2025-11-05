@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Movies</title>
+  </head>
+  <body>
+    <h1>Movie List</h1>
+    <ul>
+      {% for movie in movies %}
+      <li>
+        <h2>{{ movie.title }}</h2>
+        <p><strong>Release Date:</strong> {{ movie.release_date }}</p>
+        <p><strong>Genre:</strong> {{ movie.genre_text }}</p>
+        <p><strong>Plot:</strong> {{ movie.plot }}</p>
+
+        {% if movie.crew %}
+        <p><strong>Crew:</strong></p>
+        <ul>
+          {% for member in movie.crew %}
+          <li>{{ member.name }} - {{ member.job }}</li>
+          {% endfor %}
+        </ul>
+        {% endif %} {% if movie.cast %}
+        <p><strong>Cast:</strong></p>
+        <ul>
+          {% for actor in movie.cast %}
+          <li>{{ actor.name }}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </body>
+</html>
