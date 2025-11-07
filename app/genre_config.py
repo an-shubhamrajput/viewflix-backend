@@ -1,5 +1,4 @@
 DB_BY_GENRE = {
-    # regional languages
     "905": "streamable_movies",  # Marathi
     "102": "bhojpuri_movies",
     "903": "bengali_movies",

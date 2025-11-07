@@ -40,7 +40,7 @@ app = create_app()
 app.register_blueprint(movie_bp, url_prefix='/movie')
 app.register_blueprint(profile_bp, url_prefix='/profile')
 
-CORS(app, resources={r"/*": {"origins": "*"}})
+CORS(app, resources={r"/*": {"origins": "http://192.168.1.31:PORT"}})
 
 @app.route('/')
 def mainFun():
@@ -55,5 +55,6 @@ def db_test():
         return f"Connected to the database successfully! Result: {output}"
     except Exception as e:
         return f"Failed to connect to database: {e}"
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
