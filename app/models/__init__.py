@@ -11,6 +11,7 @@ from .movie_detail import MovieDetails
 from .free_movie_detail import FreeMoviesDetails
 from .tmdb_free_movie import TmdbFreeMovies
 from .videos import Videos
+from .classical_movie import ClassicMovies
 
 __all__ = [
     'db',
@@ -23,4 +24,5 @@ __all__ = [
     'FreeMoviesDetails',
     'TmdbFreeMovies',
     'Videos',
+    'ClassicMovies'
 ]

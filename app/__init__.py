@@ -39,7 +39,15 @@ class Config:
         f"mysql+pymysql://{_ENCODED_USER}:{_ENCODED_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_DATABASE}"
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    
+    # Apply pooled connection settings to all engines (including binds)
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_size": int(os.environ.get("DB_POOL_SIZE", "10")),
+        "max_overflow": int(os.environ.get("DB_MAX_OVERFLOW", "20")),
+        "pool_timeout": int(os.environ.get("DB_POOL_TIMEOUT", "30")),
+        "pool_recycle": int(os.environ.get("DB_POOL_RECYCLE", "1800")),
+        "pool_pre_ping": True,
+    }
+
     @staticmethod
     def get_database_uri(database_name: str) -> str:
         """Generate database URI for a given database name"""
@@ -47,7 +55,7 @@ class Config:
             f"mysql+pymysql://{Config._ENCODED_USER}:{Config._ENCODED_PASSWORD}@"
             f"{Config.DB_HOST}:{Config.DB_PORT}/{database_name}"
         )
-    
+
     @staticmethod
     def get_binds() -> dict:
         """Generate SQLAlchemy binds configuration for all databases"""
@@ -66,11 +74,20 @@ def create_app():
     CORS(app, resources={r"/*": {"origins": "*"}})
 
     app.config.from_object(Config)
+    # Make every uppercase environment variable (including those loaded via .env)
+    # available through Flask's config for consistency across the project.
+    for key, value in os.environ.items():
+        if key.isupper():
+            app.config[key] = value
+
     # Configure multiple database bindings
     app.config['SQLALCHEMY_BINDS'] = Config.get_binds()
     db.init_app(app)
     mysql_conn.init_app(app)
-    
+    # Ensure SQLAlchemy per-genre sessions are cleaned up
+    from . import db_helper as _db_helper_module
+    _db_helper_module.init_app(app)
+
     # Import models to register them with SQLAlchemy
     from .models import (
         MovieRating, PopularMovies, RecentAddedMovies, TopRatedMovies,
