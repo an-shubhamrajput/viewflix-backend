@@ -9,7 +9,8 @@ from urllib.parse import quote_plus
 from . import mysql_conn
 from .genre_config import DB_BY_GENRE
 
-
+# Load frontend URLs from FE_URL environment variable
+frontend_urls = os.getenv("FE_URL")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Load environment variables from .env located at project root (if present)
 load_dotenv(PROJECT_ROOT / '.env', override=True)
@@ -70,8 +71,10 @@ class Config:
 def create_app():
     app = Flask(__name__)
     app.secret_key = 'supersecretkey'  # Use a strong random secret in production
+    print("Creating app with allowed frontend URLs for CORS:", frontend_urls)
+    # CORS(app, resources={r"/*": {"origins": "*"}})
+    CORS(app, resources={r"/*": {"origins": frontend_urls}})
 
-    CORS(app, resources={r"/*": {"origins": "*"}})
 
     app.config.from_object(Config)
     # Make every uppercase environment variable (including those loaded via .env)

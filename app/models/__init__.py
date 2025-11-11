@@ -6,6 +6,7 @@ from .movie_rating import MovieRating
 from .popular_movie import PopularMovies
 from .recently_added_movies import RecentAddedMovies
 from .top_rated_movie import TopRatedMovies
+        # from .upcoming_movie import UpcommingMovies
 from .upcoming_movie import UpcommingMovies
 from .movie_detail import MovieDetails
 from .free_movie_detail import FreeMoviesDetails

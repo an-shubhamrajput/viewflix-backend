@@ -5,7 +5,7 @@ from app.db_helper import get_model_query, models_to_dict_list,get_database_name
 from sqlalchemy import or_, func
 import re
 from sqlalchemy.dialects.postgresql import JSONB
-from app.models import PopularMovies, RecentAddedMovies, TopRatedMovies, ClassicMovies
+from app.models import PopularMovies, RecentAddedMovies, TopRatedMovies, ClassicMovies, UpcommingMovies
 from app.db_helper import  model_to_dict
 from app.models import MovieDetails
 
@@ -24,7 +24,7 @@ def movieInfo():
     print("genre_id:", genre_id)
     try:
         # Use SQLAlchemy model query instead of raw SQL
-        query = get_model_query(PopularMovies, genre_id)
+        query = get_model_query(UpcommingMovies, genre_id)
         movies = query.limit(60).all()
 
         # Convert SQLAlchemy models to dictionaries
@@ -204,10 +204,10 @@ def more_like_this():
         elif hasattr(movie, "genre_ids") and movie.genre_ids:
             genre_ids = [int(g.strip()) for g in movie.genre_ids.split(",")]
         else:
-            return jsonify({"error": "No genres found for the movie"}), 404
+            genre_ids = [18,53]
 
         if not genre_ids:
-            return jsonify({"error": "No valid genres found"}), 404
+            genre_ids = [18,53]
 
         # Extract base title for series matching
         base_title = movie.title
