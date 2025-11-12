@@ -60,8 +60,6 @@
 #     app.run(host="0.0.0.0", port=5000, debug=True)
 
 from app import create_app, db
-from route.movie import movie_bp
-from route.profile import profile_bp
 from flask_cors import CORS
 from sqlalchemy import text
 from dotenv import load_dotenv
@@ -76,9 +74,14 @@ frontend_urls = [url.strip() for url in frontend_urls if url.strip()]  # clean s
 
 print("Allowed frontend URLs for CORS:", frontend_urls)
 
-# Register blueprints
-app.register_blueprint(movie_bp, url_prefix='/movie')
-app.register_blueprint(profile_bp, url_prefix='/profile')
+# Conditionally import and register movie/profile routes to avoid loading movie models
+# during admin-only migrations.
+model_scope = os.getenv("MODEL_SCOPE", "all").lower()
+if model_scope != "admin":
+    from route.movie import movie_bp
+    from route.profile import profile_bp
+    app.register_blueprint(movie_bp, url_prefix='/movie')
+    app.register_blueprint(profile_bp, url_prefix='/profile')
 
 CORS(app, resources={r"/*": {"origins": frontend_urls}})
 
