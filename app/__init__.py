@@ -19,6 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Load environment variables from .env located at project root (if present)
 load_dotenv(PROJECT_ROOT / '.env', override=True)
 
+
 db = SQLAlchemy()
 
 def _get_env_value(key: str) -> str:
