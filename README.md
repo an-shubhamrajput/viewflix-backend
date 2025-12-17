@@ -237,5 +237,233 @@ FLASK_APP=server.py flask run --host 0.0.0.0 --port 5000
 Open:
 - Admin: `/admin`
 - APIs: `/content/settings`, `/content/banners`
+ 
 
+## Content-Based Recommendation System (Phase 1)
+
+This backend also includes a **metadata-only, content-based movie recommendation model** built with **Linear Regression** (scikit-learn).  
+It uses only movie metadata (genres, popularity, release date) and synthetic user genre profiles (no behavior data yet).
+
+
+### High-Level Overview
+
+- **Goal**: Rank movies for:
+  - **Recommended for You**
+  - **Trending in Your Genres**
+  - **New Releases in &lt;Genre&gt;** (e.g. Action)
+- **Inputs**:
+  - Movie metadata from MySQL:
+    - `id`
+    - `title`
+    - `genre_text` – e.g. `"Action|Drama|Thriller"`
+    - `popularity`
+    - `release_date`
+  - User-selected genres (e.g. `["Action", "Drama"]`)
+- **Outputs**:
+  - Ranked movie lists per section, using a trained Linear Regression model.
+
+
+### Data Sources & Mapping (Multi-DB)
+
+The recommender is designed to train **one global model** over movies coming from **multiple MySQL databases** (languages/genres).
+
+- Each DB has a common movie table schema (logical):
+  - `id` – movie id
+  - `title` – movie title
+  - `genre_text` – pipe/comma separated genres, e.g. `"Action|Drama|Thriller"`
+  - `popularity` – numeric popularity score (stored as float or string)
+  - `release_date` – `DATE` or string `YYYY-MM-DD`
+  - `poster_path` – optional poster relative path or URL
+- All **free movie** data lives in a table named `free_movies` in each DB.
+- The mapping is centralized via `MovieTableConfig`:
+  - File: `app/reco/data_loader.py`
+  - Example:
+    - `MovieTableConfig(table_name="free_movies", id_column="id", title_column="title", genre_text_column="genre_text", popularity_column="popularity", release_date_column="release_date", poster_path_column="poster_path")`
+
+
+### Modules & Responsibilities
+
+- **`app/reco/db_connections.py`**
+  - Reads base MySQL connection details from env:
+    - `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_PORT`
+  - Discovers which movie databases to use:
+    - `RECO_MOVIE_DATABASES` – comma-separated list (recommended), e.g.  
+      `tamil_movies,telugu_movies,kanada_movies,malayalam_movies,action_movies,comedy_movies,romantic_movies,animated_movies,horror_movies,thriller_movies,mixgenres_movies`
+    - If not set, falls back to values from `app.genre_config.DB_BY_GENRE`.
+  - Provides:
+    - `get_reco_database_names()` → `List[str]` of DB names.
+    - `connect_to_database(database_name)` → raw MySQL connection using shared creds.
+
+- **`app/reco/data_loader.py`**
+  - Defines:
+    - `MovieRecord` – container for movie metadata:
+      - `id`, `title`, `genre_text`, `popularity_raw`, `release_date`
+      - `poster_path` (optional)
+      - `source_db` (optional, filled by multi-DB loader)
+    - `MovieTableConfig` – describes which table/columns to read.
+
+- **`app/reco/multi_db_loader.py`**
+  - Uses `MovieTableConfig` + `connect_to_database` to read from **multiple** DBs.
+  - Functions:
+    - `load_movies_from_database(db_name, cfg)` – load `List[MovieRecord]` from a single DB.
+    - `load_movies_multi_db(db_names, cfg)` – load from all DBs, combine into one list; each record is tagged with `source_db`.
+
+- **`app/reco/preprocessing.py`**
+  - Genre utilities:
+    - `parse_genres(genre_text)` – supports `"Action|Drama"` or comma-separated.
+    - `build_genre_vocab(movies)` – global vocab `genre -> index`.
+    - `encode_genres_multi_hot(genres, vocab)` – multi-hot numpy vectors.
+  - Popularity:
+    - `PopularityNormalizer` – min–max scaling, built from all movie popularities.
+  - Recency:
+    - `compute_recency_score(release_date, half_life_days=180)` implementing  
+      \( \text{recency} = \exp(-\text{days\_since\_release} / 180) \).
+  - Feature containers:
+    - `EngineeredFeatures` – holds:
+      - `movie_ids`, `titles`
+      - `movie_genre_vectors` (N × G)
+      - `popularity_norm` (N × 1)
+      - `recency_scores` (N × 1)
+      - `genre_vocab`, `popularity_normalizer`
+  - User-aware features:
+    - `compute_genre_match_score(movie_genres, user_genres)` = matched / total user genres.
+    - `build_full_feature_matrix_for_user(engineered, movies, user_genres)` combines:
+      - movie genre multi-hot
+      - normalized popularity
+      - recency score
+      - user genre multi-hot
+      - `genre_match_score`
+
+- **`app/reco/model.py`**
+  - Relevance function (used to synthesize labels for supervised training):
+    - \( \text{relevance} = 0.5 \cdot \text{genre\_match} + 0.3 \cdot \text{popularity\_norm} + 0.2 \cdot \text{recency} \)
+  - Model:
+    - `LinearRegression` from `sklearn.linear_model`.
+    - `train_recommender(movies, default_user_genres, test_size=0.2)`:
+      - Builds `EngineeredFeatures` from movies.
+      - Builds a user-specific feature matrix for a **synthetic user genre profile**.
+      - Trains the Linear Regression model.
+      - Computes and returns **MSE** and **R²**.
+  - Artifact wrapper:
+    - `TrainedRecommender` stores:
+      - `model` (LinearRegression)
+      - `engineered` (EngineeredFeatures)
+    - Methods:
+      - `predict_for_user(movies, user_genres)` → predicted relevance + `genre_match_scores`.
+      - `save(path)` / `load(path)` using `joblib`.
+    - Default path: `RECO_MODEL_PATH` or `app/reco_artifacts/content_recommender.joblib`.
+
+- **`app/reco/inference.py`**
+  - `ScoredMovie` – holds:
+    - `movie` (`MovieRecord`)
+    - `model_score`
+    - `popularity_norm`
+    - `recency_score`
+    - `genre_match_score`
+  - `score_movies_for_user(recommender, movies, user_genres)`:
+    - Uses `TrainedRecommender` to produce `List[ScoredMovie]` for a user.
+
+  - **Section helpers (homepage logic)**:
+    - **A. `recommended_for_you(scored_movies, user_genres, limit=25)`**
+      - Filters to movies whose genres overlap with `user_genres`.
+      - Sorts by `model_score` (predicted relevance).
+      - Returns top 20–30 (configurable).
+    - **B. `trending_in_your_genres(scored_movies, user_genres, limit=12)`**
+      - Filters to movies overlapping `user_genres`.
+      - Ranks by:
+        - \( 0.7 \cdot \text{popularity\_norm} + 0.3 \cdot \text{model\_score} \)
+      - Returns top 10–15 (configurable).
+    - **C. `new_releases_in_genre(scored_movies, target_genre, days_window=60, limit=20)`**
+      - Filters to movies where `genre_text` includes `target_genre` (case-insensitive).
+      - Only keeps movies with `release_date` in the last `days_window` days.
+      - Ranks by `model_score + recency_score`.
+      - Reusable for any genre (e.g. `"Action"` → **“New Releases in Action”**).
+
+
+### Dependencies for the Recommender
+
+Additional packages (already listed in `requirements.txt`):
+
+- `numpy`
+- `scikit-learn`
+- `joblib`
+
+Install everything in your (activated) virtual environment:
+
+```bash
+pip install -r requirements.txt
+```
+
+
+### Training the Global Multi-DB Model
+
+1. **Ensure base DB env vars are set** (same as for the main app, but note we do NOT use `DB_DATABASE` here):
+
+```bash
+export DB_HOST=127.0.0.1
+export DB_PORT=3306
+export DB_USER=your_mysql_user_with_access_to_all_movie_dbs
+export DB_PASSWORD=your_password
+```
+
+2. **Specify which databases to include** in training (recommended):
+
+```bash
+export RECO_MOVIE_DATABASES="tamil_movies,telugu_movies,kanada_movies,malayalam_movies,action_movies,comedy_movies,romantic_movies,animated_movies,horror_movies,thriller_movies,mixgenres_movies"
+```
+
+If `RECO_MOVIE_DATABASES` is not set, the system will fall back to using all database names from `app.genre_config.DB_BY_GENRE`.
+
+3. **Run the multi-DB training script** from the backend root:
+
+```bash
+python train.py
+```
+
+This will:
+
+- Connect to each configured database.
+- Load movies from the `free_movies` table in every DB.
+- Build a unified dataset and engineer features (genres, popularity, recency).
+- Train a global Linear Regression model using a synthetic user genre profile.
+- Print **MSE** and **R²** to the console.
+- Save the trained model artifact to `app/reco_artifacts/content_recommender.joblib` (or `RECO_MODEL_PATH` if set).
+
+
+### Running Inference (CLI Demo, Multi-DB)
+
+You can test the multi-DB recommender from the command line before wiring it into Flask routes:
+
+```bash
+python run_recommender_demo.py
+```
+
+What it does:
+
+- Resolves the list of movie databases using `RECO_MOVIE_DATABASES` (or `DB_BY_GENRE` fallback).
+- Loads movies from the `free_movies` table across all those DBs.
+- Loads `TrainedRecommender` from disk.
+- Uses a sample user genre profile (e.g. `["Action", "Drama"]`).
+- Scores all movies (from every DB) and prints:
+  - **“Recommended for You”**
+  - **“Trending in Your Genres”**
+  - **“New Releases in Action”**
+
+
+### Integrating with Flask Routes (Future Phase)
+
+For production integration, the typical pattern is:
+
+- Load `TrainedRecommender` once at app startup (or lazily, then cache it).
+- For each request:
+  - Resolve user’s selected genres (e.g. from `users.free_genres` or onboarding data).
+  - Load candidate movies (e.g. from `movie_tamil_en`, `popularmovies`, etc.).
+  - Use:
+    - `score_movies_for_user(...)`
+    - `recommended_for_you(...)`
+    - `trending_in_your_genres(...)`
+    - `new_releases_in_genre(...)`
+  - Return ranked lists as JSON to your frontend.
+
+This phase-1 system is **content-based only** (no collaborative filtering, no deep learning) and is designed so you can later plug in behavior-based or hybrid models without changing the database schema.
 

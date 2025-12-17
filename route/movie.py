@@ -7,6 +7,7 @@ import re
 from sqlalchemy.dialects.postgresql import JSONB
 from app.models import PopularMovies, RecentAddedMovies, TopRatedMovies, ClassicMovies, UpcommingMovies
 from app.models import MovieDetails
+from app.search_multi_db import search_movies_by_title
 
 movie_bp = Blueprint('movie', __name__)
 
@@ -248,3 +249,58 @@ def more_like_this():
 
     except Exception as e:
         return jsonify({"error": f"Database error: {str(e)}"}), 500
+
+
+# =========================================================
+# Global Movie Search Across All Genre Databases
+# =========================================================
+@movie_bp.route('/search-global', methods=['GET'])
+def search_global_movies():
+    """
+    Search for movies by title across all configured movie databases.
+
+    Query params:
+        q (str): search text for movie title (required)
+        limit_per_db (int, optional): max matches per database (default 5)
+        max_results (int, optional): max total results (default 30)
+
+    Response:
+        {
+          "query": "mario",
+          "results": [
+            {
+              "id": 502356,
+              "title": "The Super Mario Bros. Movie",
+              "genre_text": "16,10751,12,14,35",
+              "popularity": 1234.56,
+              "poster_path": "/path.jpg",
+              "release_date": "2023-04-05",
+              "source_db": "streamable_movies",
+              "genre_id": "905",
+              "source_table": "free_movies" | "popularmovies"
+            },
+            ...
+          ]
+        }
+    """
+    title_query = request.args.get("q")
+    if not title_query:
+        return jsonify({"error": "q (movie title query) is required"}), 400
+
+    try:
+        limit_per_db = int(request.args.get("limit_per_db", "5"))
+        max_results = int(request.args.get("max_results", "30"))
+    except ValueError:
+        return jsonify({"error": "limit_per_db and max_results must be integers"}), 400
+
+    try:
+        results = search_movies_by_title(
+            title_query=title_query,
+            limit_per_db=limit_per_db,
+            max_results=max_results,
+        )
+    except Exception as e:
+        return jsonify({"error": f"Search error: {str(e)}"}), 500
+
+    return jsonify({"query": title_query, "results": results})
+

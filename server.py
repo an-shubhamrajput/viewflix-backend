@@ -70,7 +70,7 @@ app = create_app()
 
 # Load frontend URLs from FE_URL environment variable
 frontend_urls = os.getenv("FE_URL", "").split(",")
-frontend_urls = [url.strip() for url in frontend_urls if url.strip()]  # clean spaces
+frontend_urls = [url.strip() for url in frontend_urls if url.strip()]
 
 print("Allowed frontend URLs for CORS:", frontend_urls)
 
@@ -86,10 +86,6 @@ if model_scope != "admin":
 CORS(app, resources={r"/*": {"origins": frontend_urls}})
 
 
-@app.route('/')
-def mainFun():
-    return 'hii'
-
 @app.route('/db-test')
 def db_test():
     try:
@@ -100,4 +96,4 @@ def db_test():
         return f"Failed to connect to database: {e}"
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5001, debug=True)

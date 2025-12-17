@@ -37,12 +37,15 @@ class Config:
     DB_PORT = int(os.environ.get('DB_PORT', '3306'))
     SSL_CA_PATH = os.environ.get('SSL_CA_PATH')
 
+    print(f"Configuring DB connection to host: {DB_HOST}, database: {DB_DATABASE} password:{DB_PASSWORD}")
+
     _ENCODED_USER = quote_plus(DB_USER)
     _ENCODED_PASSWORD = quote_plus(DB_PASSWORD)
 
     SQLALCHEMY_DATABASE_URI = (
         f"mysql+pymysql://{_ENCODED_USER}:{_ENCODED_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_DATABASE}"
     )
+    print(f"SQLALCHEMY_DATABASE_URI: {SQLALCHEMY_DATABASE_URI}")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     # Apply pooled connection settings to all engines (including binds)
     SQLALCHEMY_ENGINE_OPTIONS = {
@@ -70,6 +73,7 @@ class Config:
         # Add all genre-specific databases
         for database_name in DB_BY_GENRE.values():
             binds[database_name] = Config.get_database_uri(database_name)
+        print("SQLALCHEMY_BINDS configured for databases:", binds)
         return binds
 
 
