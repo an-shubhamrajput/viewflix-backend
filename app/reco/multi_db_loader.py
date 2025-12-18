@@ -3,338 +3,224 @@ Multi-database data loading for the global content-based recommender.
 
 This module:
 - Connects to multiple MySQL databases using shared credentials.
-- Discovers movie tables and their schemas dynamically.
-- Reads movie rows from those tables.
-- Attaches `source_db` to each record so we can track origin.
+- Loads movies ONLY from the `moviedetails` table.
+- Attaches `source_db` to each record for tracking origin.
 
-Design notes:
-- We avoid hardcoding database names or table names.
-- We prefer a standard table `free_movies` when present (per product spec),
-  but we still *validate* its schema via DESCRIBE before using it.
-- If `free_movies` is missing or contains no usable rows, we gracefully
-  fall back to `popularmovies` where possible.
+CRITICAL RULES:
+- ONLY load from `moviedetails` table
+- NO fallback to free_movies, popularmovies, or any other tables
+- Every movie must have source_db set
 """
 
 from __future__ import annotations
 
-from typing import List, Sequence, Dict, Any, Optional
+from typing import List, Sequence, Dict, Any
 
-from .db_connections import connect_to_database
+from .db_connections import connect_to_database, get_reco_database_names
 from .data_loader import MovieTableConfig, MovieRecord, _parse_release_date, _to_float
 
 
-def _list_tables(conn, database_name: str) -> List[str]:
+def _table_exists(conn, table_name: str) -> bool:
     """
-    Run `SHOW TABLES` in the given database.
+    Check if a specific table exists in the connected database.
     """
     cursor = conn.cursor()
     cursor.execute("SHOW TABLES")
     rows = cursor.fetchall()
-
-    # MySQL returns rows like ('table_name',)
     tables = [row[0] for row in rows]
-    print(f"[INFO] Tables in database '{database_name}': {tables}")
-    return tables
+    return table_name in tables
 
 
 def _describe_table(conn, table_name: str) -> List[Dict[str, Any]]:
     """
-    Run `DESCRIBE table_name` and return a list of column metadata dictionaries.
+    Run `DESCRIBE table_name` and return column metadata.
     """
     cursor = conn.cursor(dictionary=True)
     cursor.execute(f"DESCRIBE {table_name}")
     rows: List[Dict[str, Any]] = cursor.fetchall()
-    print(f"[INFO] Schema for '{table_name}': {[r['Field'] for r in rows]}")
     return rows
 
 
-def _infer_movie_table_config(
+def _validate_moviedetails_schema(
     database_name: str,
-    tables: Sequence[str],
     conn,
-) -> Optional[MovieTableConfig]:
+) -> bool:
     """
-    Inspect tables and infer which one contains movie data and how to map
-    its columns to the logical movie schema, for the primary choice: `free_movies`.
+    Validate that moviedetails table exists and has required columns.
 
-    Strategy:
-    - Prefer a table literally named `free_movies` when present (per product spec).
-    - Validate its schema by checking for required logical fields.
+    Required columns:
+    - id
+    - title
+    - genres
+    - overview (can be NULL)
+    - popularity
+    - release_date
+    - poster_path
     """
-    # Prefer the canonical free_movies table when present.
-    preferred_table = None
-    if "free_movies" in tables:
-        preferred_table = "free_movies"
+    if not _table_exists(conn, "moviedetails"):
+        print(f"[WARN] Table 'moviedetails' not found in database '{database_name}'")
+        return False
 
-    if not preferred_table:
-        print(
-            f"[WARN] No 'free_movies' table found in database '{database_name}'. "
-            f"Skipping free_movies in this database (may fall back to other tables)."
-        )
-        return None
-
-    cols = _describe_table(conn, preferred_table)
+    cols = _describe_table(conn, "moviedetails")
     col_names = {c["Field"] for c in cols}
 
+    # Updated required columns (removed 'status' since your table doesn't have it)
     required_cols = {
         "id",
         "title",
-        "genre_text",
+        "genres",
+        "overview",
         "popularity",
         "release_date",
+        "poster_path",
     }
 
     missing = required_cols - col_names
     if missing:
         print(
-            f"[WARN] Table '{preferred_table}' in database '{database_name}' "
-            f"is missing required columns {missing}. Skipping this database."
+            f"[WARN] Table 'moviedetails' in database '{database_name}' "
+            f"is missing required columns: {missing}"
         )
-        return None
+        return False
 
-    # poster_path is optional; only use it if present.
-    poster_col = "poster_path" if "poster_path" in col_names else None
-
-    cfg = MovieTableConfig(
-        table_name=preferred_table,
-        id_column="id",
-        title_column="title",
-        genre_text_column="genre_text",
-        popularity_column="popularity",
-        release_date_column="release_date",
-        poster_path_column=poster_col or "poster_path",
-    )
-
-    print(
-        f"[INFO] Using table '{preferred_table}' in database '{database_name}' "
-        f"with columns: id='{cfg.id_column}', title='{cfg.title_column}', "
-        f"genre='{cfg.genre_text_column}', popularity='{cfg.popularity_column}', "
-        f"release_date='{cfg.release_date_column}', poster='{poster_col}'."
-    )
-    return cfg
+    print(f"[INFO] Table 'moviedetails' in database '{database_name}' validated successfully")
+    return True
 
 
-def _infer_popularmovies_config(
+def _load_movies_from_moviedetails(
     database_name: str,
-    tables: Sequence[str],
-    conn,
-) -> Optional[MovieTableConfig]:
-    """
-    Fallback: infer a MovieTableConfig for `popularmovies` if `free_movies`
-    is unavailable or unusable.
-
-    We accept either:
-    - genre_text column, or
-    - genre_ids column (treated as genre tokens).
-    """
-    if "popularmovies" not in tables:
-        print(
-            f"[WARN] No 'popularmovies' table found in database '{database_name}'. "
-            f"Skipping popularmovies fallback."
-        )
-        return None
-
-    cols = _describe_table(conn, "popularmovies")
-    col_names = {c["Field"] for c in cols}
-
-    required = {"id", "title", "popularity", "release_date"}
-    missing = required - col_names
-    if missing:
-        print(
-            f"[WARN] Table 'popularmovies' in database '{database_name}' "
-            f"is missing required columns {missing}. Skipping this table."
-        )
-        return None
-
-    # Choose a genre column: prefer human-readable genre_text if present,
-    # otherwise fall back to numeric genre_ids.
-    genre_col: Optional[str] = None
-    if "genre_text" in col_names:
-        genre_col = "genre_text"
-    elif "genre_ids" in col_names:
-        genre_col = "genre_ids"
-
-    if genre_col is None:
-        print(
-            f"[WARN] Table 'popularmovies' in database '{database_name}' has no "
-            f"'genre_text' or 'genre_ids' column. Skipping this table."
-        )
-        return None
-
-    poster_col = "poster_path" if "poster_path" in col_names else None
-
-    cfg = MovieTableConfig(
-        table_name="popularmovies",
-        id_column="id",
-        title_column="title",
-        genre_text_column=genre_col,
-        popularity_column="popularity",
-        release_date_column="release_date",
-        poster_path_column=poster_col or "poster_path",
-    )
-
-    print(
-        f"[INFO] Using table 'popularmovies' in database '{database_name}' "
-        f"with columns: id='{cfg.id_column}', title='{cfg.title_column}', "
-        f"genre='{cfg.genre_text_column}', popularity='{cfg.popularity_column}', "
-        f"release_date='{cfg.release_date_column}', poster='{poster_col}'."
-    )
-    return cfg
-
-
-def _load_movies_from_table(
-    database_name: str,
-    config: MovieTableConfig,
 ) -> List[MovieRecord]:
     """
-    Load movie metadata from a specific database/table using an inferred config.
+    Load movie metadata from the moviedetails table in the specified database.
+
+    STRICT: Only loads from moviedetails, no fallback tables.
     """
     conn = connect_to_database(database_name)
     try:
+        # Validate schema first
+        if not _validate_moviedetails_schema(database_name, conn):
+            print(f"[WARN] Skipping database '{database_name}' due to schema validation failure")
+            return []
+
         cursor = conn.cursor(dictionary=True)
-        query = f"""
+
+        # Updated query: removed status filter since your table doesn't have that column
+        query = """
             SELECT
-                {config.id_column}           AS id,
-                {config.title_column}        AS title,
-                {config.genre_text_column}   AS genre_text,
-                {config.popularity_column}   AS popularity,
-                {config.release_date_column} AS release_date
-                {',' if config.poster_path_column else ''}
-                {config.poster_path_column if config.poster_path_column else ''}
-            FROM {config.table_name}
-            WHERE {config.genre_text_column} IS NOT NULL
-              AND {config.genre_text_column} != ''
+                id,
+                title,
+                genres AS genre_text,
+                overview,
+                popularity,
+                release_date,
+                poster_path
+            FROM moviedetails
+            WHERE genres IS NOT NULL
+              AND genres != ''
+              AND genres != '[]'
         """
         cursor.execute(query)
         rows: List[Dict[str, Any]] = cursor.fetchall()
+
+        print(f"[INFO] Fetched {len(rows)} raw rows from '{database_name}.moviedetails'")
+    except Exception as exc:
+        print(f"[ERROR] Failed to query '{database_name}.moviedetails': {exc}")
+        import traceback
+        traceback.print_exc()
+        return []
     finally:
         conn.close()
-
-    print(
-        f"[INFO] Fetched {len(rows)} raw rows from "
-        f"'{database_name}.{config.table_name}'."
-    )
 
     movies: List[MovieRecord] = []
     for row in rows:
         popularity = _to_float(row.get("popularity"))
-        if popularity is None:
-            # Skip entries without a valid popularity value; they add noise.
+        if popularity is None or popularity == 0:
+            # Skip movies with no popularity
             continue
+
+        # MANDATORY: overview must not be None
+        overview = row.get("overview")
+        if overview is None:
+            overview = ""
+
         release_date = _parse_release_date(row.get("release_date"))
+
         movies.append(
             MovieRecord(
                 id=int(row["id"]),
                 title=row.get("title") or "",
                 genre_text=row.get("genre_text") or "",
+                overview=overview,
                 popularity_raw=popularity,
                 release_date=release_date,
-                poster_path=row.get("poster_path") if "poster_path" in row else None,
-                source_db=database_name,
+                poster_path=row.get("poster_path"),
+                source_db=database_name,  # CRITICAL: Track origin
             )
         )
 
-    print(
-        f"[INFO] Accepted {len(movies)} movies after validation from "
-        f"'{database_name}.{config.table_name}'."
-    )
+    print(f"[INFO] Accepted {len(movies)} valid movies from '{database_name}.moviedetails'")
     return movies
 
 
 def load_movies_multi_db(
-    database_names: Sequence[str],
+    database_names: Sequence[str] | None = None,
 ) -> List[MovieRecord]:
     """
     Load and combine movie metadata from multiple databases.
+
+    Args:
+        database_names: List of database names to query. If None, auto-discovers
+                       from environment or genre_config.
+
+    Returns:
+        Combined list of MovieRecord objects, each tagged with source_db.
+
+    STRICT BEHAVIOR:
+    - Only loads from moviedetails table
+    - No fallback to other tables
+    - Skips databases without valid moviedetails table
     """
+    if database_names is None:
+        database_names = get_reco_database_names()
+
+    print(f"[INFO] Loading movies from {len(database_names)} databases...")
+
     all_movies: List[MovieRecord] = []
+    successful_dbs = 0
+    failed_dbs = []
+
     for db_name in database_names:
-        print(f"[INFO] Inspecting database '{db_name}' for movie tables...")
-        conn = None
+        print(f"\n[INFO] Processing database '{db_name}'...")
+
         try:
-            # Open connection to this specific database using shared creds.
-            conn = connect_to_database(db_name)
-            tables = _list_tables(conn, db_name)
-
-            # First, try free_movies as the primary source.
-            cfg_free = _infer_movie_table_config(db_name, tables, conn)
-
-            # If no free_movies config, try popularmovies directly.
-            if cfg_free is None:
-                cfg_pop = _infer_popularmovies_config(db_name, tables, conn)
-                cfg_to_use = cfg_pop
+            movies = _load_movies_from_moviedetails(db_name)
+            if movies:
+                all_movies.extend(movies)
+                successful_dbs += 1
             else:
-                cfg_to_use = cfg_free
+                failed_dbs.append(db_name)
         except Exception as exc:
-            # Connection or inspection failure: log and skip this database.
-            print(
-                f"[WARN] Skipping database '{db_name}' due to connection/inspection error: {exc}"
-            )
-            if conn is not None:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-            continue
-        finally:
-            if conn is not None:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-
-        if cfg_to_use is None:
-            # Already logged why this DB was skipped.
+            print(f"[ERROR] Failed to load from database '{db_name}': {exc}")
+            failed_dbs.append(db_name)
             continue
 
-        # 1) Attempt to load from the chosen config (free_movies if available, else popularmovies).
-        try:
-            movies = _load_movies_from_table(db_name, cfg_to_use)
-        except Exception as exc:
-            print(
-                f"[WARN] Failed to load movies from '{db_name}.{cfg_to_use.table_name}': {exc}"
-            )
-            continue
+    print(f"\n{'=' * 70}")
+    print(f"[SUCCESS] Total movies loaded: {len(all_movies)}")
+    print(f"[INFO] Successful databases: {successful_dbs}/{len(database_names)}")
+    if failed_dbs:
+        print(f"[WARN] Failed databases ({len(failed_dbs)}): {', '.join(failed_dbs[:5])}")
+        if len(failed_dbs) > 5:
+            print(f"       ... and {len(failed_dbs) - 5} more")
 
-        # 2) If free_movies yielded zero movies, try falling back to popularmovies.
-        if not movies and cfg_to_use.table_name == "free_movies":
-            print(
-                f"[INFO] No usable movies found in '{db_name}.free_movies'. "
-                f"Attempting fallback to 'popularmovies'."
-            )
-            # Need a fresh connection for schema inspection
-            conn = None
-            try:
-                conn = connect_to_database(db_name)
-                tables = _list_tables(conn, db_name)
-                cfg_pop = _infer_popularmovies_config(db_name, tables, conn)
-            except Exception as exc:
-                print(
-                    f"[WARN] Fallback inspection for 'popularmovies' in database "
-                    f"'{db_name}' failed: {exc}"
-                )
-                cfg_pop = None
-            finally:
-                if conn is not None:
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
+    # Summary by source
+    if all_movies:
+        source_counts = {}
+        for movie in all_movies:
+            source_counts[movie.source_db] = source_counts.get(movie.source_db, 0) + 1
 
-            if cfg_pop is not None:
-                try:
-                    movies = _load_movies_from_table(db_name, cfg_pop)
-                except Exception as exc:
-                    print(
-                        f"[WARN] Failed to load movies from fallback "
-                        f"'{db_name}.{cfg_pop.table_name}': {exc}"
-                    )
-                    movies = []
+        print(f"\n[INFO] Movies by source database:")
+        for source, count in sorted(source_counts.items()):
+            print(f"  - {source}: {count} movies")
+    print("=" * 70)
 
-        all_movies.extend(movies)
-
-    print(f"[INFO] Total movies loaded across all databases: {len(all_movies)}")
     return all_movies
-
-
-
