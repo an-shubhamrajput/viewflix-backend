@@ -80,10 +80,10 @@ def main():
     print("\n[STEP 2] Defining default user profile...")
 
     default_user_genres = [
-        "Action",
-        "Comedy",
-        "Drama",
-        "Thriller",
+        # "Action",
+        # "Comedy",
+        # "Drama",
+        # "Thriller",
         "Romance",
     ]
 
