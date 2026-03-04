@@ -1,12 +1,13 @@
-# ViewFlix Admin Backend Setup (Flask)
+# ViewFlix Backend (Flask)
 
-This document explains everything added to enable an Admin Dashboard using Flask-Admin, how to configure the environment, create the database, run migrations, and consume the new content APIs from your frontend.
+This backend powers the ViewFlix platform, providing APIs for the User Interface, Admin Dashboard, and Recommendation Engine. It manages multi-language movie databases, user content, and admin configurations.
 
 
 ## Overview of Changes
 
-- Added Flask-Admin for a web dashboard at `/admin`.
-- Added admin-only models:
+- **Multi-Language Support**: New APIs to fetch aggregated movies based on user language preferences.
+- **Admin Dashboard**: Flask-Admin integration for managing site content.
+- **Admin Models**:
   - `SiteSetting` for key/value site configuration (supports types: text/html/json/url/int/bool).
   - `Banner` for homepage/hero banners with sort order and active toggle.
 - Registered admin views for the above models.
@@ -21,7 +22,9 @@ This document explains everything added to enable an Admin Dashboard using Flask
 - `app/__init__.py` – App factory; config, SQLAlchemy, Flask-Admin, Flask-Migrate, blueprints.
 - `app/admin_views.py` – Admin index view (placeholder, ready for customization).
 - `app/models/admin/site_content.py` – Admin models `SiteSetting`, `Banner`.
+- `app/language_config.py` – Configuration mapping languages to database names.
 - `route/content.py` – Public APIs to fetch settings and banners.
+- `route/movie_language.py` – APIs for multi-language movie aggregation.
 - `requirements.txt` – Includes Flask-Admin and Flask-Migrate.
 
 
@@ -144,6 +147,51 @@ After step 2, you will have a `migrations/` folder at the backend root. After st
   - `Banner` (public banners with `is_active` and `sort_order`)
 
 You can add/edit/delete entries here. These will be stored in `viewflix_web` and exposed by APIs below.
+
+
+## Multi-Language Movie APIs
+
+These APIs allow fetching movies based on a list of preferred languages, automatically aggregating results from the corresponding language-specific databases.
+
+- **Base URL**: `/movie-language`
+- **Query Parameter**: `languages` (Required). Must be a JSON list, e.g., `["Bengali", "Marathi"]`.
+
+
+### API Endpoints & Examples
+
+Here are the full example URLs for testing (assuming server runs on port 5001):
+
+1. **Upcoming Movies**
+   - `http://localhost:5001/movie-language/?languages=["Bengali","Marathi","European"]`
+
+2. **Popular Movies**
+   - `http://localhost:5001/movie-language/popular?languages=["Bengali","Marathi","European"]`
+
+3. **Recently Added Movies**
+   - `http://localhost:5001/movie-language/recent?languages=["Bengali","Marathi","European"]`
+
+4. **Top Rated Movies**
+   - `http://localhost:5001/movie-language/recent-movies?languages=["Bengali","Marathi","European"]`
+
+5. **Classical Movies**
+   - `http://localhost:5001/movie-language/classical?languages=["Bengali","Marathi","European"]`
+
+### Response Format
+The response is a JSON list of movies. Each movie object includes a `source_db` field indicating its origin.
+
+```json
+{
+  "movies": [
+    {
+      "id": 101,
+      "title": "Movie Title",
+      "source_db": "bengali_movies",
+      "poster_path": "...",
+      ...
+    }
+  ]
+}
+```
 
 
 ## Content APIs (Read-only)

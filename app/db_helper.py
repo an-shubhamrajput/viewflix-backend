@@ -46,6 +46,23 @@ def _get_scoped_session_for_genre(genre_id: str):
     return session
 
 
+def _get_scoped_session_for_db(database_name: str):
+    """
+    Create or retrieve a scoped SQLAlchemy session bound to the specific database name.
+    The session is stored on flask.g and removed at app context teardown.
+    """
+    if not hasattr(g, "_genre_sa_sessions"):
+        g._genre_sa_sessions = {}
+    session = g._genre_sa_sessions.get(database_name)
+    if session is None:
+        # Create a scoped session bound to the specific engine (bind)
+        engine = db.get_engine(current_app, bind=database_name)
+        from sqlalchemy.orm import scoped_session, sessionmaker
+        session = scoped_session(sessionmaker(bind=engine))
+        g._genre_sa_sessions[database_name] = session
+    return session
+
+
 def get_model_query(model_class, genre_id: str):
     """
     Get a query for a model using the appropriate database bind.
@@ -59,6 +76,21 @@ def get_model_query(model_class, genre_id: str):
         A query object bound to the genre's database
     """
     session = _get_scoped_session_for_genre(genre_id)
+    return session.query(model_class)
+
+
+def get_model_query_by_db_name(model_class, database_name: str):
+    """
+    Get a query for a model using the appropriate database bind name directly.
+
+    Args:
+        model_class: The SQLAlchemy model class
+        database_name: The specific database bind name
+
+    Returns:
+        A query object bound to the database
+    """
+    session = _get_scoped_session_for_db(database_name)
     return session.query(model_class)
 
 

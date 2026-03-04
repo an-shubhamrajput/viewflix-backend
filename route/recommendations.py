@@ -13,7 +13,7 @@ from app.reco.inference import (
     score_movies_for_user,
     recommended_for_you,
 )
-from app.reco.multi_db_loader import load_movies_multi_db
+from app.reco.multi_db_loader import load_movies_multi_db, load_top_movies_multi_db
 
 # ----------------------------------------------------------------------------
 # Blueprint
@@ -188,3 +188,38 @@ def genres():
     return jsonify(
         sorted(recommender.engineered.genre_vocab.keys())
     )
+
+
+# ----------------------------------------------------------------------------
+# TOP 10 MOVIES (GET)
+# ----------------------------------------------------------------------------
+@reco_bp.route("/top-ten", methods=["GET"])
+def top_ten():
+    """
+    Return top 10 movies from all databases, sorted by popularity.
+    """
+    # OPTIMIZATION: directly load top 10 from each DB to avoid loading 200k movies
+    movies = load_top_movies_multi_db(limit=10)
+    
+    # Sort by popularity descending (since we might have 10 from EACH db)
+    ranked = sorted(movies, key=lambda m: m.popularity_raw, reverse=True)
+
+    # Take top 10
+    top_movies = ranked[:10]
+
+    return jsonify([
+        {
+            "id": m.id,
+            "title": m.title,
+            "genres": m.genre_text,
+            "overview": (m.overview or "")[:250],
+            "poster_path": m.poster_path,
+            "popularity": m.popularity_raw,
+            "release_date": (
+                 m.release_date.isoformat()
+                 if m.release_date else None
+            ),
+            "source_db": m.source_db,
+        }
+        for m in top_movies
+    ])

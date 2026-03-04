@@ -162,6 +162,74 @@ def _load_movies_from_moviedetails(
     return movies
 
 
+def _load_top_movies_from_moviedetails(
+    database_name: str,
+    limit: int = 10,
+) -> List[MovieRecord]:
+    """
+    Load TOP N movies sorted by popularity descending from moviedetails.
+    """
+    conn = connect_to_database(database_name)
+    try:
+        if not _validate_moviedetails_schema(database_name, conn):
+            return []
+
+        cursor = conn.cursor(dictionary=True)
+
+        query = f"""
+            SELECT
+                id,
+                title,
+                genres AS genre_text,
+                overview,
+                popularity,
+                release_date,
+                poster_path
+            FROM moviedetails
+            WHERE genres IS NOT NULL
+              AND genres != ''
+              AND genres != '[]'
+            ORDER BY popularity DESC
+            LIMIT {limit}
+        """
+        cursor.execute(query)
+        rows: List[Dict[str, Any]] = cursor.fetchall()
+
+        print(f"[INFO] Fetched top {len(rows)} rows from '{database_name}.moviedetails'")
+    except Exception as exc:
+        print(f"[ERROR] Failed to query '{database_name}.moviedetails': {exc}")
+        return []
+    finally:
+        conn.close()
+
+    movies: List[MovieRecord] = []
+    for row in rows:
+        popularity = _to_float(row.get("popularity"))
+        if popularity is None:
+            popularity = 0.0
+
+        overview = row.get("overview")
+        if overview is None:
+            overview = ""
+
+        release_date = _parse_release_date(row.get("release_date"))
+
+        movies.append(
+            MovieRecord(
+                id=int(row["id"]),
+                title=row.get("title") or "",
+                genre_text=row.get("genre_text") or "",
+                overview=overview,
+                popularity_raw=popularity,
+                release_date=release_date,
+                poster_path=row.get("poster_path"),
+                source_db=database_name,
+            )
+        )
+
+    return movies
+
+
 def load_movies_multi_db(
     database_names: Sequence[str] | None = None,
 ) -> List[MovieRecord]:
@@ -223,4 +291,29 @@ def load_movies_multi_db(
             print(f"  - {source}: {count} movies")
     print("=" * 70)
 
+    return all_movies
+
+
+def load_top_movies_multi_db(
+    limit: int = 10,
+    database_names: Sequence[str] | None = None,
+) -> List[MovieRecord]:
+    """
+    Load top N movies from each database to efficiently get candidates for the global top 10.
+    """
+    if database_names is None:
+        database_names = get_reco_database_names()
+
+    print(f"[INFO] Loading top {limit} movies from {len(database_names)} databases...")
+
+    all_movies: List[MovieRecord] = []
+    for db_name in database_names:
+        try:
+            movies = _load_top_movies_from_moviedetails(db_name, limit=limit)
+            all_movies.extend(movies)
+        except Exception as exc:
+            print(f"[ERROR] Failed to load top movies from database '{db_name}': {exc}")
+            continue
+
+    print(f"[SUCCESS] Total candidate movies loaded: {len(all_movies)}")
     return all_movies

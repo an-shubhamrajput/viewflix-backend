@@ -17,16 +17,19 @@ CORS(app, resources={r"/*": {"origins": frontend_urls}})
 # Register blueprints ONCE
 # ----------------------------------------------------------------------------
 from route.movie import movie_bp
+from route.movie_language import movie_language_bp
 from route.profile import profile_bp
 from route.recommendations import reco_bp
 
-app.register_blueprint(movie_bp, url_prefix="/movie")
+# app.register_blueprint(movie_bp, url_prefix="/movie")
+app.register_blueprint(movie_language_bp, url_prefix="/movie-language")
 app.register_blueprint(profile_bp, url_prefix="/profile")
 app.register_blueprint(reco_bp)   # already has /api/recommendations
 
 print("[INFO] ✓ Recommendation API ready at /api/recommendations")
 
 # ----------------------------------------------------------------------------
+
 @app.route("/db-test")
 def db_test():
     try:
@@ -43,7 +46,8 @@ def index():
         "services": [
             "/movie",
             "/profile",
-            "/api/recommendations"
+            "/api/recommendations",
+            "/api/recommendations/top-ten"
         ]
     }
 

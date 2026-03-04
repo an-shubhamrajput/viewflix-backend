@@ -65,7 +65,9 @@ class Config:
     def get_binds() -> dict:
         binds = {None: Config.SQLALCHEMY_DATABASE_URI}
         for database_name in DB_BY_GENRE.values():
-            binds[database_name] = Config.get_database_uri(database_name)
+            bind_config = Config.SQLALCHEMY_ENGINE_OPTIONS.copy()
+            bind_config["url"] = Config.get_database_uri(database_name)
+            binds[database_name] = bind_config
         return binds
 
 
