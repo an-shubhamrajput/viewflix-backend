@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ViewFlix — Movie Recommendations</title>
+    <meta
+      name="description"
+      content="Discover personalized movie recommendations powered by AI. Browse top movies, explore genres, and find your next favorite film."
+    />
+
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet" />
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <!-- Custom CSS -->
+    <link href="/static/css/recommendations.css" rel="stylesheet" />
+  </head>
+  <body>
+    <!-- ===== NAVBAR ===== -->
+    <nav class="navbar navbar-expand-lg fixed-top vf-navbar">
+      <div class="container-fluid px-4">
+        <a class="navbar-brand vf-brand" href="#"> <i class="bi bi-film me-2"></i>ViewFlix </a>
+        <div class="d-flex align-items-center gap-3">
+          <span class="vf-api-status" id="apiStatus">
+            <i class="bi bi-circle-fill text-warning me-1" style="font-size: 0.5rem"></i>
+            Connecting...
+          </span>
+        </div>
+      </div>
+    </nav>
+
+    <!-- ===== MAIN CONTENT ===== -->
+    <main class="vf-main">
+      <!-- HERO / Genre Picker Section -->
+      <section class="vf-hero-section">
+        <div class="container-fluid px-4">
+          <div class="vf-hero-content">
+            <h1 class="vf-hero-title">Discover Your Next Favorite Movie</h1>
+            <p class="vf-hero-subtitle">Select your preferred genres to get personalized recommendations powered by AI</p>
+
+            <!-- Genre Picker -->
+            <div class="vf-genre-picker" id="genrePicker">
+              <div class="vf-genre-picker-loading" id="genreLoading">
+                <div class="spinner-border spinner-border-sm text-info me-2" role="status"></div>
+                Loading genres...
+              </div>
+              <div class="vf-genre-chips" id="genreChips"></div>
+            </div>
+
+            <button class="btn vf-btn-primary mt-3" id="getRecommendationsBtn" disabled>
+              <i class="bi bi-magic me-2"></i>
+              Get Recommendations
+            </button>
+            <span class="vf-selected-count ms-3" id="selectedCount"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- TOP 10 SECTION -->
+      <section class="vf-section" id="topTenSection">
+        <div class="container-fluid px-4">
+          <div class="vf-section-header">
+            <h2 class="vf-section-title">
+              <i class="bi bi-trophy-fill text-warning me-2"></i>
+              Top 10 Movies
+            </h2>
+            <span class="vf-section-badge">Most Popular</span>
+          </div>
+          <div class="vf-scroll-container" id="topTenContainer">
+            <!-- Loading skeleton -->
+            <div class="vf-skeleton-row" id="topTenSkeleton">
+              <div class="vf-skeleton-card"></div>
+              <div class="vf-skeleton-card"></div>
+              <div class="vf-skeleton-card"></div>
+              <div class="vf-skeleton-card"></div>
+              <div class="vf-skeleton-card"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- HOMEPAGE SECTIONS (dynamic) -->
+      <div id="homepageSections"></div>
+
+      <!-- RECOMMENDED FOR YOU -->
+      <section class="vf-section" id="recoSection" style="display: none">
+        <div class="container-fluid px-4">
+          <div class="vf-section-header">
+            <h2 class="vf-section-title">
+              <i class="bi bi-person-hearts text-danger me-2"></i>
+              Recommended For You
+            </h2>
+            <span class="vf-section-badge">Personalized</span>
+          </div>
+          <div class="row g-3" id="recoContainer"></div>
+        </div>
+      </section>
+
+      <!-- FOOTER -->
+      <footer class="vf-footer">
+        <div class="container-fluid px-4 text-center">
+          <p class="mb-0 text-secondary">
+            <i class="bi bi-film me-1"></i>
+            ViewFlix Recommendation Engine &middot; Powered by Content-Based Filtering
+          </p>
+        </div>
+      </footer>
+    </main>
+
+    <!-- ===== MOVIE DETAIL MODAL ===== -->
+    <div class="modal fade" id="movieModal" tabindex="-1" aria-labelledby="movieModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content vf-modal-content">
+          <div class="modal-header vf-modal-header border-0">
+            <h5 class="modal-title" id="movieModalLabel">Movie Details</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body vf-modal-body">
+            <div class="row g-4">
+              <div class="col-md-4 text-center">
+                <img id="modalPoster" class="vf-modal-poster" src="" alt="Movie Poster" />
+              </div>
+              <div class="col-md-8">
+                <h3 class="fw-bold mb-2" id="modalTitle"></h3>
+                <div class="mb-2" id="modalGenres"></div>
+                <div class="mb-2 text-secondary" id="modalMeta"></div>
+                <p class="vf-modal-overview" id="modalOverview"></p>
+              </div>
+            </div>
+
+            <!-- More Like This -->
+            <div class="mt-4" id="moreLikeThisSection" style="display: none">
+              <h5 class="vf-section-title mb-3">
+                <i class="bi bi-collection-play me-2"></i>
+                More Like This
+              </h5>
+              <div class="vf-scroll-container" id="moreLikeThisContainer"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bootstrap 5 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Custom JS -->
+    <script src="/static/js/recommendations.js"></script>
+  </body>
+</html>

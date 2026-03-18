@@ -31,7 +31,8 @@ try:
     from app.reco.multi_db_loader import load_movies_multi_db
     from app.reco.model import train_recommender, DEFAULT_MODEL_PATH
     from app.reco.preprocessing import export_movie_dataset_csv
-    from app.reco.similarity import MovieSimilarityEngine
+    from app.reco.similarity import MovieSimilarityEngi
+    ne
     from app.reco.watchlist_loader import load_watchlist_multi_db
     from app.reco.export_watchlist_csv import export_watchlist_csv
 except ModuleNotFoundError as e:

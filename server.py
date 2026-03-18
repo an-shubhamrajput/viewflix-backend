@@ -1,4 +1,5 @@
 from app import create_app, db
+from flask import render_template
 from flask_cors import CORS
 from sqlalchemy import text
 from dotenv import load_dotenv
@@ -27,6 +28,7 @@ app.register_blueprint(profile_bp, url_prefix="/profile")
 app.register_blueprint(reco_bp)   # already has /api/recommendations
 
 print("[INFO] ✓ Recommendation API ready at /api/recommendations")
+print("[INFO] ✓ Recommendation UI at /recommendations")
 
 # ----------------------------------------------------------------------------
 
@@ -39,6 +41,12 @@ def db_test():
         return str(e), 500
 
 
+@app.route("/recommendations")
+def recommendations_ui():
+    """Serve the Bootstrap recommendation frontend."""
+    return render_template("recommendations.html")
+
+
 @app.route("/")
 def index():
     return {
@@ -46,6 +54,7 @@ def index():
         "services": [
             "/movie",
             "/profile",
+            "/recommendations",
             "/api/recommendations",
             "/api/recommendations/top-ten"
         ]
@@ -54,3 +63,4 @@ def index():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001, debug=True)
+

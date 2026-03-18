@@ -72,7 +72,11 @@ class Config:
 
 
 def create_app():
-    app = Flask(__name__)
+    app = Flask(
+        __name__,
+        template_folder=str(PROJECT_ROOT / 'templates'),
+        static_folder=str(PROJECT_ROOT / 'static'),
+    )
     app.secret_key = 'supersecretkey'  # Replace in production
 
     CORS(app, resources={r"/*": {"origins": frontend_urls}})
