@@ -30,9 +30,11 @@ sys.path.insert(0, str(project_root))
 try:
     from app.reco.multi_db_loader import load_movies_multi_db
     from app.reco.model import train_recommender, DEFAULT_MODEL_PATH
-    from app.reco.preprocessing import export_movie_dataset_csv
-    from app.reco.similarity import MovieSimilarityEngi
-    ne
+    from app.reco.preprocessing import (
+        export_movie_dataset_csv,
+        build_genre_vocab,
+    )
+    from app.reco.similarity import MovieSimilarityEngine
     from app.reco.watchlist_loader import load_watchlist_multi_db
     from app.reco.export_watchlist_csv import export_watchlist_csv
 except ModuleNotFoundError as e:
@@ -76,19 +78,18 @@ def main():
     print(f"[SUCCESS] Loaded {len(movies)} movies")
 
     # --------------------------------------------------
-    # STEP 2: Default user profile
+    # STEP 2: Derive genre profile from movie database
     # --------------------------------------------------
-    print("\n[STEP 2] Defining default user profile...")
+    print("\n[STEP 2] Deriving genre profile from movie database...")
 
-    default_user_genres = [
-        # "Action",
-        # "Comedy",
-        # "Drama",
-        # "Thriller",
-        "Romance",
-    ]
+    # Build vocabulary from all movies in the DB so the global model
+    # is not biased toward any single genre. At inference time, the
+    # user's onboarding genres (from localStorage) are passed to
+    # predict_for_user() to personalise results.
+    genre_vocab = build_genre_vocab(movies)
+    default_user_genres = list(genre_vocab.keys())
 
-    print(f"  Genres: {default_user_genres}")
+    print(f"  Found {len(default_user_genres)} genres: {default_user_genres}")
 
     # --------------------------------------------------
     # STEP 3: Train recommender
@@ -111,9 +112,7 @@ def main():
     # --------------------------------------------------
     print("\n[STEP 4] Exporting movie feature CSV...")
 
-    movies_csv_path = (
-        project_root / "app" / "reco_artifacts" / "movies_features.csv"
-    )
+    movies_csv_path = project_root / "app" / "reco_artifacts" / "movies_features.csv"
 
     export_movie_dataset_csv(
         engineered=recommender.engineered,
@@ -127,9 +126,7 @@ def main():
 
     watchlist_records = load_watchlist_multi_db()
 
-    watchlist_csv_path = (
-        project_root / "app" / "reco_artifacts" / "user_watchlist.csv"
-    )
+    watchlist_csv_path = project_root / "app" / "reco_artifacts" / "user_watchlist.csv"
 
     export_watchlist_csv(
         records=watchlist_records,
@@ -180,6 +177,7 @@ def main():
     print(f"Similarity     : {similarity_path}")
     print(f"Total movies   : {len(movies)}")
     print(f"Watchlist rows : {len(watchlist_records)}")
+    print(f"Genre vocab    : {len(default_user_genres)} genres")
 
     print("\n[READY] System ready for inference 🚀")
 

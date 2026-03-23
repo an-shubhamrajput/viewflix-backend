@@ -22,6 +22,7 @@ import mysql.connector
 # Data containers
 # -------------------------
 
+
 @dataclass
 class MovieRecord:
     """Lightweight container for the minimal metadata we need."""
@@ -34,6 +35,7 @@ class MovieRecord:
     release_date: Optional[date]
     poster_path: Optional[str]
     source_db: str  # MANDATORY: tracks which database this movie came from
+    spoken_languages: str = ""
 
 
 @dataclass
@@ -57,6 +59,7 @@ class MovieTableConfig:
 # DB connection helpers
 # -------------------------
 
+
 def _connect() -> mysql.connector.connection.MySQLConnection:
     host = os.environ.get("DB_HOST")
     user = os.environ.get("DB_USER")
@@ -65,9 +68,7 @@ def _connect() -> mysql.connector.connection.MySQLConnection:
     port = int(os.environ.get("DB_PORT", "3306"))
 
     if not all([host, user, password, database]):
-        raise RuntimeError(
-            "DB_HOST, DB_USER, DB_PASSWORD, DB_DATABASE must be set"
-        )
+        raise RuntimeError("DB_HOST, DB_USER, DB_PASSWORD, DB_DATABASE must be set")
 
     return mysql.connector.connect(
         host=host,
@@ -81,6 +82,7 @@ def _connect() -> mysql.connector.connection.MySQLConnection:
 # -------------------------
 # Parsing helpers
 # -------------------------
+
 
 def _parse_release_date(value: Any) -> Optional[date]:
     if value is None:
@@ -112,9 +114,9 @@ def _to_float(value: Any) -> Optional[float]:
 # Core loader
 # -------------------------
 
+
 def load_movies(
-    config: MovieTableConfig = MovieTableConfig(),
-    source_db_name: str = "default"
+    config: MovieTableConfig = MovieTableConfig(), source_db_name: str = "default"
 ) -> List[MovieRecord]:
     """
     Load movie metadata from moviedetails table.

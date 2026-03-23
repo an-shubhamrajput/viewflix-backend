@@ -5,6 +5,7 @@ This module:
 - Connects to multiple MySQL databases using shared credentials.
 - Loads movies ONLY from the `moviedetails` table.
 - Attaches `source_db` to each record for tracking origin.
+- Deduplicates movies by id, keeping the entry with the highest popularity.
 
 CRITICAL RULES:
 - ONLY load from `moviedetails` table
@@ -64,7 +65,6 @@ def _validate_moviedetails_schema(
     cols = _describe_table(conn, "moviedetails")
     col_names = {c["Field"] for c in cols}
 
-    # Updated required columns (removed 'status' since your table doesn't have it)
     required_cols = {
         "id",
         "title",
@@ -83,7 +83,9 @@ def _validate_moviedetails_schema(
         )
         return False
 
-    print(f"[INFO] Table 'moviedetails' in database '{database_name}' validated successfully")
+    print(
+        f"[INFO] Table 'moviedetails' in database '{database_name}' validated successfully"
+    )
     return True
 
 
@@ -97,14 +99,14 @@ def _load_movies_from_moviedetails(
     """
     conn = connect_to_database(database_name)
     try:
-        # Validate schema first
         if not _validate_moviedetails_schema(database_name, conn):
-            print(f"[WARN] Skipping database '{database_name}' due to schema validation failure")
+            print(
+                f"[WARN] Skipping database '{database_name}' due to schema validation failure"
+            )
             return []
 
         cursor = conn.cursor(dictionary=True)
 
-        # Updated query: removed status filter since your table doesn't have that column
         query = """
             SELECT
                 id,
@@ -113,19 +115,23 @@ def _load_movies_from_moviedetails(
                 overview,
                 popularity,
                 release_date,
-                poster_path
+                poster_path,
+                IFNULL(spoken_languages, '') AS spoken_languages
             FROM moviedetails
             WHERE genres IS NOT NULL
-              AND genres != ''
-              AND genres != '[]'
+            AND genres != ''
+            AND genres != '[]'
         """
         cursor.execute(query)
         rows: List[Dict[str, Any]] = cursor.fetchall()
 
-        print(f"[INFO] Fetched {len(rows)} raw rows from '{database_name}.moviedetails'")
+        print(
+            f"[INFO] Fetched {len(rows)} raw rows from '{database_name}.moviedetails'"
+        )
     except Exception as exc:
         print(f"[ERROR] Failed to query '{database_name}.moviedetails': {exc}")
         import traceback
+
         traceback.print_exc()
         return []
     finally:
@@ -135,10 +141,8 @@ def _load_movies_from_moviedetails(
     for row in rows:
         popularity = _to_float(row.get("popularity"))
         if popularity is None or popularity == 0:
-            # Skip movies with no popularity
             continue
 
-        # MANDATORY: overview must not be None
         overview = row.get("overview")
         if overview is None:
             overview = ""
@@ -154,11 +158,14 @@ def _load_movies_from_moviedetails(
                 popularity_raw=popularity,
                 release_date=release_date,
                 poster_path=row.get("poster_path"),
-                source_db=database_name,  # CRITICAL: Track origin
+                source_db=database_name,
+                spoken_languages=row.get("spoken_languages") or "",  # ← add
             )
         )
 
-    print(f"[INFO] Accepted {len(movies)} valid movies from '{database_name}.moviedetails'")
+    print(
+        f"[INFO] Accepted {len(movies)} valid movies from '{database_name}.moviedetails'"
+    )
     return movies
 
 
@@ -184,18 +191,21 @@ def _load_top_movies_from_moviedetails(
                 overview,
                 popularity,
                 release_date,
-                poster_path
+                poster_path,
+                IFNULL(spoken_languages, '') AS spoken_languages
             FROM moviedetails
             WHERE genres IS NOT NULL
-              AND genres != ''
-              AND genres != '[]'
+            AND genres != ''
+            AND genres != '[]'
             ORDER BY popularity DESC
             LIMIT {limit}
         """
         cursor.execute(query)
         rows: List[Dict[str, Any]] = cursor.fetchall()
 
-        print(f"[INFO] Fetched top {len(rows)} rows from '{database_name}.moviedetails'")
+        print(
+            f"[INFO] Fetched top {len(rows)} rows from '{database_name}.moviedetails'"
+        )
     except Exception as exc:
         print(f"[ERROR] Failed to query '{database_name}.moviedetails': {exc}")
         return []
@@ -224,10 +234,29 @@ def _load_top_movies_from_moviedetails(
                 release_date=release_date,
                 poster_path=row.get("poster_path"),
                 source_db=database_name,
+                spoken_languages=row.get("spoken_languages") or "",  # ← add
             )
         )
 
     return movies
+
+
+def _deduplicate_movies(movies: List[MovieRecord]) -> List[MovieRecord]:
+    """
+    Deduplicate movies by id, keeping the entry with the highest popularity_raw.
+
+    Same movie can appear in multiple source databases with the same id but
+    different popularity values. We keep the highest popularity entry and
+    discard the rest.
+    """
+    best: Dict[int, MovieRecord] = {}
+    for movie in movies:
+        existing = best.get(movie.id)
+        if existing is None or movie.popularity_raw > existing.popularity_raw:
+            best[movie.id] = movie
+
+    deduped = list(best.values())
+    return deduped
 
 
 def load_movies_multi_db(
@@ -241,7 +270,9 @@ def load_movies_multi_db(
                        from environment or genre_config.
 
     Returns:
-        Combined list of MovieRecord objects, each tagged with source_db.
+        Combined, deduplicated list of MovieRecord objects.
+        Where the same movie id exists across multiple databases,
+        only the entry with the highest popularity is kept.
 
     STRICT BEHAVIOR:
     - Only loads from moviedetails table
@@ -272,21 +303,30 @@ def load_movies_multi_db(
             failed_dbs.append(db_name)
             continue
 
+    print(f"\n[INFO] Total movies before deduplication: {len(all_movies)}")
+
+    # Deduplicate by movie id across all databases
+    all_movies = _deduplicate_movies(all_movies)
+
+    print(f"[INFO] Total movies after deduplication : {len(all_movies)}")
+
     print(f"\n{'=' * 70}")
-    print(f"[SUCCESS] Total movies loaded: {len(all_movies)}")
+    print(f"[SUCCESS] Total unique movies loaded: {len(all_movies)}")
     print(f"[INFO] Successful databases: {successful_dbs}/{len(database_names)}")
     if failed_dbs:
-        print(f"[WARN] Failed databases ({len(failed_dbs)}): {', '.join(failed_dbs[:5])}")
+        print(
+            f"[WARN] Failed databases ({len(failed_dbs)}): {', '.join(failed_dbs[:5])}"
+        )
         if len(failed_dbs) > 5:
             print(f"       ... and {len(failed_dbs) - 5} more")
 
-    # Summary by source
+    # Summary by source (after dedup, source_db reflects the winning entry)
     if all_movies:
-        source_counts = {}
+        source_counts: Dict[str, int] = {}
         for movie in all_movies:
             source_counts[movie.source_db] = source_counts.get(movie.source_db, 0) + 1
 
-        print(f"\n[INFO] Movies by source database:")
+        print(f"\n[INFO] Unique movies by source database (winning entry):")
         for source, count in sorted(source_counts.items()):
             print(f"  - {source}: {count} movies")
     print("=" * 70)
@@ -299,7 +339,8 @@ def load_top_movies_multi_db(
     database_names: Sequence[str] | None = None,
 ) -> List[MovieRecord]:
     """
-    Load top N movies from each database to efficiently get candidates for the global top 10.
+    Load top N movies from each database to efficiently get candidates
+    for the global top 10. Also deduplicates by id.
     """
     if database_names is None:
         database_names = get_reco_database_names()
@@ -315,5 +356,8 @@ def load_top_movies_multi_db(
             print(f"[ERROR] Failed to load top movies from database '{db_name}': {exc}")
             continue
 
-    print(f"[SUCCESS] Total candidate movies loaded: {len(all_movies)}")
+    # Deduplicate here too so top-ten results are also clean
+    all_movies = _deduplicate_movies(all_movies)
+
+    print(f"[SUCCESS] Total unique candidate movies loaded: {len(all_movies)}")
     return all_movies
